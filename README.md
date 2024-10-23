@@ -16,9 +16,14 @@ This project develops a web app with an ETL and ML pipeline in the backend. The 
 
 3. Go to http://0.0.0.0:3001/
 
-### Repository Structure
+## Repository Structure
 
+The project repository is organized as follows:
+
+```bash
 disaster_response_pipeline_project/  
+│
+├── .git/                              # Git-related files and folders
 │
 ├── app/                               # Flask web app files
 │   ├── run.py                         # Script to run the web application
@@ -34,7 +39,4 @@ disaster_response_pipeline_project/
 ├── models/                            # Model training and saving files
 │   └── train_classifier.py            # Script to train the machine learning model
 │
-├── .git/                              # Git-related files and folders
-│
 ├── README.md                          # ReadMe file with project documentation
-│
