@@ -1,101 +1,59 @@
 import json
+import re
+import sys
+
+from flask import Flask, jsonify, render_template, request
 import plotly
-import pandas as pd
-
-from nltk.stem import WordNetLemmatizer
-from nltk.tokenize import word_tokenize
-
-from flask import Flask
-from flask import render_template, request, jsonify
 from plotly.graph_objs import Bar
-from sklearn.externals import joblib
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import classification_report, f1_score, precision_score, recall_score
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.pipeline import Pipeline
 from sqlalchemy import create_engine
+
+import joblib
+import numpy as np
+import pandas as pd
+import pickle
 
 
 app = Flask(__name__)
-
-def tokenize(text):
-    tokens = word_tokenize(text)
-    lemmatizer = WordNetLemmatizer()
-
-    clean_tokens = []
-    for tok in tokens:
-        clean_tok = lemmatizer.lemmatize(tok).lower().strip()
-        clean_tokens.append(clean_tok)
-
-    return clean_tokens
 
 # load data
 engine = create_engine('sqlite:///../data/DisasterResponse.db')
 df = pd.read_sql_table('categorized_messages', engine)
 
+
+def tokenize(text):
+    # Normalize and split on whitespace
+    return re.sub(r"[^a-zA-Z0-9]", " ", text.lower()).split()
+
 # load model
 model = joblib.load("../models/classifier.pkl")
 
 
-# index webpage displays cool visuals and receives user input text for model
+# index webpage displays visuals and receives user input text for model
 @app.route('/')
 @app.route('/index')
 def index():
-    
-    # extract data needed for visuals
-    # TODO: Below is an example - modify to extract data for your own visuals
-    genre_counts = df.groupby('genre').count()['message']
-    genre_names = list(genre_counts.index)
-
-    # Extract data for the category distribution visualization
-    category_counts = df.iloc[:, 4:].sum().sort_values(ascending=False)  # Sum all the messages per category
+    category_counts = df.iloc[:, 4:].sum().sort_values(ascending=False)
     category_names = list(category_counts.index)
 
-    
-    # create visuals
-    # TODO: Below is an example - modify to create your own visuals
-    graphs = [
-        {
-            'data': [
-                Bar(
-                    x=genre_names,
-                    y=genre_counts
-                )
-            ],
-
-            'layout': {
-                'title': 'Distribution of Message Genres',
-                'yaxis': {
-                    'title': "Count"
-                },
-                'xaxis': {
-                    'title': "Genre"
-                }
-            }
+    graph = {
+        'data': [Bar(x=category_names, y=category_counts)],
+        'layout': {
+            'title': 'Distribution of Message Categories',
+            'yaxis': {'title': "Count"},
+            'xaxis': {'title': "Category", 'tickangle': -45},
         },
-        {
-             'data': [
-                Bar(
-                    x=category_names,
-                    y=category_counts
-                )
-            ],
+    }
 
-            'layout': {
-                'title': 'Distribution of Message Categories',
-                'yaxis': {
-                    'title': "Count"
-                },
-                'xaxis': {
-                    'title': "Category",
-                    'tickangle': -45  # Rotates the x-axis labels for better readability
-                }
-            }
-        }
-    ]
-    
-    # encode plotly graphs in JSON
-    ids = ["graph-{}".format(i) for i, _ in enumerate(graphs)]
-    graphJSON = json.dumps(graphs, cls=plotly.utils.PlotlyJSONEncoder)
-    
-    # render web page with plotly graphs
-    return render_template('master.html', ids=ids, graphJSON=graphJSON)
+    graphJSON = json.dumps([graph], cls=plotly.utils.PlotlyJSONEncoder)
+    return render_template('master.html', graphJSON=graphJSON)
+
 
 
 # web page that handles user query and displays model results

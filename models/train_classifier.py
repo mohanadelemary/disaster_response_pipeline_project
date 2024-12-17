@@ -2,31 +2,23 @@ import sys
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine
-from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, f1_score, precision_score, recall_score
 from sklearn.model_selection import GridSearchCV
+from sklearn.exceptions import UndefinedMetricWarning
 import pickle
-import nbformat
-import nltk
 import re
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
-
-nltk.download('punkt')
-nltk.download('wordnet')
-nltk.download('stopwords')
 
 
 
 def load_data(database_filepath):
     
     """
-    Load data from a SQLite database and prepare the feature and target datasets.
+    Load data from an SQLite database and prepare the feature and target datasets.
 
     This function connects to the specified SQLite database, retrieves the data 
     from the 'categorized_messages' table, and separates it into features and 
@@ -54,14 +46,7 @@ def load_data(database_filepath):
     df = pd.read_sql_table('categorized_messages', con=engine)
     
     X = df[['message']]
-    Y = df[['related', 'request', 'offer',
-       'aid_related', 'medical_help', 'medical_products', 'search_and_rescue',
-       'security', 'military', 'child_alone', 'water', 'food', 'shelter',
-       'clothing', 'money', 'missing_people', 'refugees', 'death', 'other_aid',
-       'infrastructure_related', 'transport', 'buildings', 'electricity',
-       'tools', 'hospitals', 'shops', 'aid_centers', 'other_infrastructure',
-       'weather_related', 'floods', 'storm', 'fire', 'earthquake', 'cold',
-       'other_weather', 'direct_report']]
+    Y = df.drop(columns='message')
     
     category_names = Y.columns
     
@@ -71,33 +56,9 @@ def load_data(database_filepath):
     return X, Y, category_names
 
 
-
-def tokenize(text):
-    """
-    Input: Array of Text
-    
-    Operations:
-    1. Remove non-alphanumeric characters
-    2. make all text lower case
-    3. remove stop words
-    4. lemmatize text
-    """
-
-
-    # Normalize text (convert to lowercase and remove punctuation)
-    text = re.sub(r"[^a-zA-Z0-9]", " ", text.lower())
-    
-    # Tokenize words
-    tokens = word_tokenize(text)
-    
-    # Remove stopwords
-    tokens = [word for word in tokens if word not in stopwords.words('english')]
-    
-    # Lemmatize tokens
-    lemmatizer = WordNetLemmatizer()
-    clean_tokens = [lemmatizer.lemmatize(word) for word in tokens]
-    
-    return clean_tokens
+def simple_tokenizer(text):
+    # Normalize and split on whitespace
+    return re.sub(r"[^a-zA-Z0-9]", " ", text.lower()).split()
 
 
 def build_model(X_train, X_test, Y_train, Y_test):
@@ -107,37 +68,36 @@ def build_model(X_train, X_test, Y_train, Y_test):
     classification.
 
     This function prepares the training and testing datasets, and constructs a 
-    machine learning pipeline that includes a count vectorizer with custom tokenization,
-    TF-IDF transformation and a multi-output classifier using RandomForest.
+    machine learning pipeline that includes a Tokenization + TF-IDF vectorization
+    and a multi-output classifier using RandomForest.
 
     Returns:
     -------
     model : sklearn.pipeline.Pipeline
       
     """
-    
+
+
     pipeline = Pipeline([
-    ('vect', CountVectorizer(tokenizer=tokenize)),  # Vectorizer using the custom tokenizer)
-    ('tfidf', TfidfTransformer()),  # Tf-Idf transformer
+    ('tfidf', TfidfVectorizer(tokenizer=simple_tokenizer)),  # Tokenization + TF-IDF vectorization
     ('clf', MultiOutputClassifier(RandomForestClassifier()))])  # Multi-label classifier
 
     parameters = {
     'clf__estimator__n_estimators': [100, 200],
-    'clf__estimator__max_depth': [None, 10, 20],
-    'clf__estimator__min_samples_split': [2, 5],
-}
+    'clf__estimator__max_depth': [None, 10],
+    'clf__estimator__min_samples_split': [2, 5]}
 
 
-    cv = GridSearchCV(pipeline, parameters, scoring='accuracy', cv=5, n_jobs=-1)
+    cv = GridSearchCV(pipeline, parameters, scoring='f1_weighted', cv=3, verbose=2,n_jobs=1)
 
-    cv.fit(X_train. Y_train)
+    cv.fit(X_train, Y_train)
 
     model = cv.best_estimator_
     
     return model
     
     
-def evaluate_model(model, X_test, Y_test, category_names):
+def evaluate_model(model, X_test, Y_test):
     """
     Evaluate a trained machine learning model using a test dataset.
 
@@ -164,14 +124,39 @@ def evaluate_model(model, X_test, Y_test, category_names):
     Returns:
     -------
     None
-    This function does not return any value. It prints the classification 
-    reports directly to the console for each category.
+    This function does not return any value. It prints the average weighted scores
+    directly to the console (F1, precision, recall).
     """
-    Y_pred = model.predict(X_test)
-    
-    for i, category in enumerate(category_names):
-        print(f"Classification report for label: {category}")
-        print(classification_report(Y_test[:, i], Y_pred[:, i]))
+   
+   # Initialize lists to store metrics for each label
+    f1_scores = []
+    precision_scores = []
+    recall_scores = []
+
+    # Ensure Y_test and Y_pred are NumPy arrays
+    Y_test = np.array(Y_test)
+    Y_pred = np.array(Y_pred)
+
+    # Iterate over each label
+    for i in range(Y_test.shape[1]):
+        f1 = f1_score(Y_test[:, i], Y_pred[:, i], average='weighted')
+        precision = precision_score(Y_test[:, i], Y_pred[:, i], average='weighted')
+        recall = recall_score(Y_test[:, i], Y_pred[:, i], average='weighted')
+
+        f1_scores.append(f1)
+        precision_scores.append(precision)
+        recall_scores.append(recall)
+
+    # Aggregate metrics across all labels
+    average_f1 = sum(f1_scores) / len(f1_scores)
+    average_precision = sum(precision_scores) / len(precision_scores)
+    average_recall = sum(recall_scores) / len(recall_scores)
+
+    print(f"Average weighted F1 Score: {average_f1:.2f}")
+    print(f"Average weighted Precision: {average_precision:.2f}")
+    print(f"Average weighted Recall: {average_recall:.2f}")
+
+   return None
     
     
     
@@ -200,14 +185,11 @@ def main():
         X, Y, category_names = load_data(database_filepath)
         X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2)
         
-        print('Building model...')
+        print('Building & Training model...')
         model = build_model(X_train, X_test, Y_train, Y_test)
         
-        print('Training model...')
-        model.fit(X_train, Y_train)
-        
         print('Evaluating model...')
-        evaluate_model(model, X_test, Y_test, category_names)
+        evaluate_model(model, X_test, Y_test)
 
         print('Saving model...\n    MODEL: {}'.format(model_filepath))
         save_model(model, model_filepath)
